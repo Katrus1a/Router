@@ -1,0 +1,102 @@
+
+DATABASE ABBREVIATIONS:
+PK = Primary Key  
+FK = Foreign Key (references target table by PK)  
+ID = The unique identifier
+
+This PostgreSQL database is designed for demo purposes and simulates an e-commerce and retail ecosystem. It spans three key schemas — `merchandising`, `marketplace`, and `analytics` — and includes realistic interrelated tables such as customers, orders, stores, employees, campaigns, and inventory.
+
+COMMON FIELDS:
+These columns can appear in multiple tables:
+- created_at: (Datetime) The date and time when the record was created.
+- updated_at: (Datetime) The date and time when the record was last updated.
+
+---
+
+## MERCHANDISING schema
+It manages and tracks customer orders, products, order items, and the relationships between them.
+
+### customers
+Stores customer data.
+- id: (Integer) Unique customer ID. PK.
+- full_name: (String) Full name of the customer.
+- email: (String) Customer's email address.
+- city: (String) Customer's city.
+- created_at: (Datetime)
+
+### products
+Stores available product details.
+- id: (Integer) Unique product ID. PK.
+- name: (String) Product name.
+- category: (String) Product category (e.g., Electronics, Fashion).
+- price_cents: (Integer) Product price in cents.
+- created_at: (Datetime)
+
+### orders
+Stores order-level data.
+- id: (Integer) Unique order ID. PK.
+- customer_id: (Integer) FK to `customers.id`.
+- total_price_cents: (Integer) Total order value in cents.
+- created_at: (Datetime)
+
+### order_items
+Stores items belonging to orders.
+- id: (Integer) Unique order item ID. PK.
+- order_id: (Integer) FK to `orders.id`.
+- product_id: (Integer) FK to `products.id`.
+- quantity: (Integer) Quantity ordered.
+- price_cents: (Integer) Item price in cents.
+- created_at: (Datetime)
+
+---
+
+## MARKETPLACE schema
+This schema handles stores, employees, and regions.
+
+### regions
+Stores geographical region data.
+- id: (Integer) Region ID. PK.
+- country: (String) Country name.
+- state: (String) State name.
+- city: (String) City name.
+- created_at: (Datetime)
+
+### stores
+Stores data about store locations.
+- id: (Integer) Store ID. PK.
+- name: (String) Store name.
+- region_id: (Integer) FK to `regions.id`.
+- active: (Boolean) Indicates if store is active.
+- created_at: (Datetime)
+
+### employees
+Stores data about store employees.
+- id: (Integer) Employee ID. PK.
+- full_name: (String) Name of the employee.
+- store_id: (Integer) FK to `stores.id`.
+- position: (String) Job title.
+- hire_date: (Date) Hiring date.
+- created_at: (Datetime)
+
+---
+
+## ANALYTICS schema
+Used for campaign management and inventory tracking.
+
+### campaigns
+Stores marketing campaign data.
+- id: (Integer) Campaign ID. PK.
+- name: (String) Campaign name.
+- status: (String) Campaign status (e.g., active, paused).
+- budget_cents: (Integer) Total budget.
+- start_date: (Date) Campaign start.
+- end_date: (Date) Campaign end.
+- created_at: (Datetime)
+
+### inventory
+Stores product stock per store.
+- id: (Integer) Inventory ID. PK.
+- product_id: (Integer) FK to `merchandising.products.id`.
+- store_id: (Integer) FK to `marketplace.stores.id`.
+- quantity: (Integer) Units in stock.
+- created_at: (Datetime)
