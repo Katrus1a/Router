@@ -57,6 +57,8 @@ def _fuzzy_suggest(text: str, k: int = 3) -> List[str]:
     # відсортуємо й віддамо top-k
     return sorted(best, key=best.get, reverse=True)[:k]
 
+from datetime import datetime
+today = datetime.today().strftime("%Y-%m-%d")
 
 
 # ─────── 3.  Prompts and function spec ───────
@@ -67,7 +69,7 @@ You must *always* return a JSON object with the keys:
   "route"        – "sql_query" or "clarify"
   "reason"       – short explanation (match user language)
   "suggestions"  – array of up to 3 table.column strings
-  "follow_up"    – array with 0–2 clarifying questions (match user language)
+ 
 
 Mandatory Rules
 ===============
@@ -76,7 +78,14 @@ Mandatory Rules
   ─ For “top N” / aggregate / date-filtered questions, proceed with SQL generation.
 • Choose **"clarify"** only when **none** of the known columns seem relevant **or** the question is clearly outside business/database context.
 • Never invent table or column names – use only those in the *Known tables* section.
-• If the user gives a vague time period (“this month”, “last year”), assume the current year **or** ask for a concrete date range.
+• If the user gives a vague time period (“this month”, “last year”, “last quarter”), translate it into a concrete date range based on today's date: {today}.
+  For example:
+  – “this month” → from the 1st of the current month to today
+  – “last month” → from the 1st to the last day of the previous month
+  – “last week” → from Monday to Sunday of the previous calendar week
+  – “this year” → from January 1st to today
+  – “last year” → January 1st to December 31st of previous year
+  If the time expression is ambiguous or nonstandard, ask the user for specific dates.
 
 Clarification Guidance
 ======================
@@ -117,12 +126,12 @@ FUNCTION_SPEC = [
                         "type": "array",
                         "items": {"type": "string"},
                     },
-                    "follow_up": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                    },
+                    #"follow_up": {
+                     #   "type": "array",
+                      #  "items": {"type": "string"},
+                   # },
                 },
-                "required": ["route", "reason", "suggestions", "follow_up"],
+                "required": ["route", "reason", "suggestions"],
             },
         },
     }
@@ -163,7 +172,7 @@ def decide_route(question: str, *, history: List[dict] | None = None) -> dict:
             valid_suggestions = [] 
 
         response["suggestions"] = valid_suggestions
-        response["language"] = detected_lang
+       # response["language"] = detected_lang
         return response
 
     return {"error": "Model did not produce a function call"}
@@ -234,14 +243,14 @@ def run_tests():
         route = result.get("route")
         reason = result.get("reason")
         suggestions = result.get("suggestions", [])
-        follow_up = result.get("follow_up", [])
+        #follow_up = result.get("follow_up", [])
         lang = result.get("language", "en")
 
         print(f"Language    : {lang}")
         print(f"Route       : {route}")
         print(f"Reason      : {reason}")
         print(f"Suggestions : {', '.join(suggestions) or 'None'}")
-        print(f"Follow-up   : {', '.join(follow_up) or 'None'}")
+       # print(f"Follow-up   : {', '.join(follow_up) or 'None'}")
 
         invalid = [s for s in suggestions if s not in _FLAT_COLUMNS]
         if invalid:
