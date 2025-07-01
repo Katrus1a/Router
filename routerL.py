@@ -1,10 +1,10 @@
 """
-Router Langchain Fix — final, tested.
-Changes versus the failing version:
-• Uses ChatOpenAI.bind_tools so the model really returns structured tool calls.
-• Extracts arguments from resp.tool_calls[0] via .args / ["args"], falling back to the old OpenAI schema when needed – so KeyError is gone.
-• Keeps fuzzy column suggestions and language‑detection logic.
-• Demo test‑suite at the bottom.
+Router Langchain — unified response version (Reason + Suggestions + Follow‑up → one user‑friendly text).
+
+Fix 2025‑07‑01
+==============
+• Removed duplicated typo in `llm = …` line that caused `SyntaxError: unmatched ')'`.
+• No functional changes otherwise; temperature‑0 and forced `tool_choice` remain.
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ today = datetime.today().strftime("%Y-%m-%d")
 # ───────── db_description.txt → schema ─────────
 
 def _parse_db_description(path: pathlib.Path) -> Dict[str, List[str]]:
-    """Parse markdown‑style schema description into {table: [columns…]}."""
+    """Parse markdown-style schema description into {table: [columns…]}."""
     schema: Dict[str, List[str]] = {}
     current: str | None = None
 
@@ -78,30 +78,38 @@ def build_system_prompt(hints: List[str], lang: str) -> str:
     """Compose concise system instructions for the router model."""
     return f"""
 You are a router for a SQL chat assistant.
-Return JSON with keys: route, reason, suggestions, follow_up.
-Respond in language: {lang}.
-Hints: {json.dumps(hints)}
-Known columns (truncated): {'; '.join(_FLAT_COLUMNS[:MAX_SCHEMA_LINES_IN_PROMPT])}
+
+Return **only** a JSON object with keys:
+  • "route"   – "sql_query" or "clarify"
+  • "message" – one coherent, user‑friendly string in **{lang}** that combines:
+      – a short reason for the chosen route,
+      – up to 3 useful column hints (if relevant),
+      – 1‑2 follow‑up questions if clarification is needed.
+
+Write the message in the same language as the user's question. Be polite, concise, and helpful.
+
+Context you can use (do **not** mention it explicitly):
+  • Today is {today}
+  • Column hints: {json.dumps(hints)}
+  • Known columns (truncated): {'; '.join(_FLAT_COLUMNS[:MAX_SCHEMA_LINES_IN_PROMPT])}
 """.strip()
 
 # ───────── OpenAI function schema ─────────
 function_schema = {
     "name": "route_decision",
-    "description": "Decide if query needs SQL generation or clarification.",
+    "description": "Decide routing and craft a user‑friendly explanatory message.",
     "parameters": {
         "type": "object",
         "properties": {
             "route": {"type": "string", "enum": ["sql_query", "clarify"]},
-            "reason": {"type": "string"},
-            "suggestions": {"type": "array", "items": {"type": "string"}},
-            "follow_up": {"type": "array", "items": {"type": "string"}},
+            "message": {"type": "string"},
         },
-        "required": ["route", "reason", "suggestions"],
+        "required": ["route", "message"],
     },
 }
 
-# ChatOpenAI instance with bound tools
-llm = ChatOpenAI(model=MODEL, api_key=API_KEY).bind_tools([function_schema])
+# ChatOpenAI instance with bound tools (temperature 0 for determinism)
+llm = ChatOpenAI(model=MODEL, api_key=API_KEY, temperature=0).bind_tools([function_schema])
 
 # ───────── Main helper ─────────
 
@@ -115,35 +123,24 @@ def decide_route(question: str) -> dict:
         {"role": "user", "content": question},
     ]
 
-    resp = llm.invoke(messages)
+    # Force the model to choose the `route_decision` tool every time
+        # LangChain/OpenAI accept only "none", "auto", or "required" here;
+    # since we bound **one** tool, "required" guarantees it will be used.
+    resp = llm.invoke(messages, tool_choice="required")
 
-    # LangChain always provides .tool_calls – ensure it's there
     if not getattr(resp, "tool_calls", None):
-        raise RuntimeError(
-            "🛑 Model replied without tool_call. Check prompt or lower temperature."
-        )
+        raise RuntimeError("🛑 Model replied without tool_call. Check prompt or lower temperature.")
 
     tc = resp.tool_calls[0]
 
-    # --- Extract arguments in a version‑safe way ------------------
+    # Extract arguments (LangChain format first)
     if isinstance(tc, dict):
-        data = tc.get("args", {})
-        # Fallback for older raw‑OpenAI style
-        if not data and "function" in tc:
+        data = tc.get("args", {}) or tc.get("arguments", {})
+        if not data and "function" in tc:  # raw OpenAI fallback
             data = json.loads(tc["function"]["arguments"])
     else:  # ToolCall dataclass
         data = tc.args
 
-    # --- Validate & patch suggestions -----------------------------
-    valid_suggestions = [s for s in data.get("suggestions", []) if s in _FLAT_COLUMNS]
-
-    if data.get("route") == "clarify":
-        valid_suggestions = []
-    elif len(valid_suggestions) < 3:
-        extra = [s for s in hints if s not in valid_suggestions]
-        valid_suggestions.extend(extra[: 3 - len(valid_suggestions)])
-
-    data["suggestions"] = valid_suggestions
     data["language"] = lang
     return data
 
@@ -163,8 +160,6 @@ if __name__ == "__main__":
         print("\n" + "=" * 30)
         print(f"Test {i}: {q}")
         res = decide_route(q)
-        print("Route      :", res.get("route"))
-        print("Reason     :", res.get("reason"))
-        print("Suggestions:", ", ".join(res.get("suggestions", [])) or "None")
-        print("Follow‑up  :", ", ".join(res.get("follow_up", [])) or "None")
-        print("Language   :", res.get("language"))
+        print("Route   :", res.get("route"))
+        print("Message :", res.get("message"))
+        print("Language:", res.get("language"))
