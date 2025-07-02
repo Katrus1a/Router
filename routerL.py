@@ -75,24 +75,67 @@ def fuzzy_suggest(text: str, k: int = 3) -> List[str]:
 # ───────── Prompt builder ─────────
 
 def build_system_prompt(hints: List[str], lang: str) -> str:
-    """Compose concise system instructions for the router model."""
+    """
+    Produce the SYSTEM prompt that drives tool‑calling LLMs in *router* mode.
+
+    The LLM must answer **only** JSON of the form
+        {"route": "sql_query" | "clarify", "message": "<string>"}
+
+    ░░░ message rules ░░░  (ONE paragraph, no section labels)
+    • 1‑3 sentences, separated by a single space.
+    • If the user explicitly asks to *list, show, count, find, average, filter* —
+      i.e. retrieve rows — choose `route = "sql_query"`, even if columns or
+      tables are not provided.
+    • For `sql_query`:
+        – Summarise the query intent.
+        – Mention key columns naturally (e.g. “using columns orders.id and
+          orders.total_price_cents”) **without square brackets** if the *hints*
+          list is non‑empty; otherwise omit columns.
+        – Optionally add one clarifying question.
+    • For `clarify`:
+        – State that more information is required.
+        – Integrate at least **one** follow‑up question into the paragraph.
+        – If the request is about *evaluating, comparing effectiveness, or
+          optimisation* but provides no concrete metrics/columns, prefer
+          `route = "clarify"` and ask which metrics to use.
+    • Do not repeat the user’s wording verbatim.
+    • Always respond in the user’s language (detected = {lang}).
+
+    Examples
+    --------
+    sql_query →
+    {"route":"sql_query","message":"Listing all products that contain peanuts using columns products.name and products.ingredients. Do you also need price information?"}
+
+    clarify →
+    {"route":"clarify","message":"I need more details to create a query. Which table or columns should I use?"}
+
+    Any deviation from this format will be rejected by the calling code.
+    """
+
+    # build short context for the model
+    known = '; '.join(_FLAT_COLUMNS[:MAX_SCHEMA_LINES_IN_PROMPT])
+    hints_json = json.dumps(hints)
+
     return f"""
-You are a router for a SQL chat assistant.
+You are a router for a SQL chat assistant. Respond with **only** valid JSON:
+{{"route": "sql_query" | "clarify", "message": "<string>"}}
 
-Return **only** a JSON object with keys:
-  • "route"   – "sql_query" or "clarify"
-  • "message" – one coherent, user‑friendly string in **{lang}** that combines:
-      – a short reason for the chosen route,
-      – up to 3 useful column hints (if relevant),
-      – 1‑2 follow‑up questions if clarification is needed.
+RULES FOR `message` (one paragraph):
+• 1–3 sentences, single paragraph.
+• If the user asks to list/show/count/find/average/filter data, set route = "sql_query".
+• sql_query → mention key columns naturally if any: {hints_json or '[]'}; no square brackets.
+• clarify  → include at least one question; use it also for requests about performance/effectiveness without metrics.
+• No repeats of user wording.
+• Reply in the same language as the user ({lang}).
 
-Write the message in the same language as the user's question. Be polite, concise, and helpful.
+If you break the format, the response will be rejected.
 
-Context you can use (do **not** mention it explicitly):
-  • Today is {today}
-  • Column hints: {json.dumps(hints)}
-  • Known columns (truncated): {'; '.join(_FLAT_COLUMNS[:MAX_SCHEMA_LINES_IN_PROMPT])}
+Context (do NOT mention verbatim):
+  • today = {today}
+  • known columns (truncated): {known}
 """.strip()
+
+
 
 # ───────── OpenAI function schema ─────────
 function_schema = {
@@ -154,6 +197,12 @@ if __name__ == "__main__":
         "Покажи користувачів із підтвердженим номером телефону",
         "Скільки замовлень зробив Джон Сміт?",
         "Pokaż wszystkie kampanie z budżetem powyżej 50 tysięcy",
+        "List the five most expensive Electronics products",
+        "Покажи загальну виручку (у доларах) за замовленнями, зробленими 15 січня 2025 року",
+        "Jaka będzie pogoda w Krakowie jutro?",
+        "Has our customer engagement improved this quarter?",
+        "Наскільки ефективна кампанія Back to School порівняно з минулим роком?",
+        "Хто з співробітників показав найкращий результат і потребує підвищення?"
     ]
 
     for i, q in enumerate(tests, 1):
